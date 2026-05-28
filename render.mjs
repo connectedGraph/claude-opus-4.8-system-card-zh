@@ -1,10 +1,28 @@
-import { readFileSync, writeFileSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { marked } from 'marked';
+import { join } from 'path';
 
-const mdPath = 'C:/Users/18086/Desktop/Translation/PDF_Translation/translated.md';
-const outPath = 'C:/Users/18086/Desktop/Translation/PDF_Translation/index.html';
+const baseDir = 'C:/Users/18086/Desktop/Translation/PDF_Translation';
+const mdPath = join(baseDir, 'translated.md');
+const outPath = join(baseDir, 'index.html');
+const imagesDir = join(baseDir, 'images');
 
 const md = readFileSync(mdPath, 'utf-8').replace(/\r\n/g, '\n');
+
+// Load image map (PDF page number -> image filenames)
+const imageMap = JSON.parse(readFileSync(join(imagesDir, 'map.json'), 'utf-8'));
+
+// Build image path list for all images (use relative paths, not base64)
+const imagePaths = {};
+for (const [page, files] of Object.entries(imageMap)) {
+  imagePaths[page] = files.map(fname => {
+    const fpath = join(imagesDir, fname);
+    if (existsSync(fpath)) {
+      return `images/${fname}`;
+    }
+    return null;
+  }).filter(Boolean);
+}
 
 // Split into pages by "---" separator (double newline around ---)
 const rawSections = md.split(/\n\n---\n\n/);
@@ -38,6 +56,26 @@ const renderedPages = sections.map((sec, i) => {
   const html = marked.parse(sec);
   return { html, index: i };
 });
+
+// Map PDF pages to sections: each translation batch covered ~5 PDF pages
+// Original PDF had 244 pages, translated into 49 batches, split into 300 sections
+// We approximate: section index / 300 * 244 ≈ PDF page
+// For each PDF page with images, find the closest section
+function pdfPageToSection(pdfPage) {
+  // Approximate mapping
+  return Math.round((pdfPage - 1) / 244 * (renderedPages.length - 1));
+}
+
+// Inject images into rendered pages
+for (const [pdfPage, paths] of Object.entries(imagePaths)) {
+  const sectionIdx = pdfPageToSection(parseInt(pdfPage));
+  if (sectionIdx >= 0 && sectionIdx < renderedPages.length && paths.length > 0) {
+    const imgHtml = paths.map(src =>
+      `<div class="page-image"><img src="${src}" alt="Figure from page ${pdfPage}" loading="lazy"></div>`
+    ).join('');
+    renderedPages[sectionIdx].html += imgHtml;
+  }
+}
 
 // Extract all headings for navigation
 const allHeadings = [];
@@ -75,11 +113,27 @@ const html = `<!DOCTYPE html>
   --ink-light: #5c4a32;
   --accent: #8b4513;
   --sidebar-width: 300px;
+  --main-bg: #d4c5a9;
+  --main-surface: linear-gradient(135deg, #f7f2ea 0%, #f0e8d8 50%, #ede4d0 100%);
+  --border-color: #b8a88a;
+  --page-shadow: 0 1px 3px rgba(0,0,0,0.08), 0 8px 24px rgba(0,0,0,0.04);
+}
+
+[data-theme="dark"] {
+  --paper-bg: #1e1e1e;
+  --paper-dark: #2a2a2a;
+  --ink: #e0d8c8;
+  --ink-light: #b0a890;
+  --accent: #d4a06a;
+  --main-bg: #141414;
+  --main-surface: linear-gradient(135deg, #1a1a1a 0%, #1e1e1e 50%, #222 100%);
+  --border-color: #3a3a3a;
+  --page-shadow: 0 1px 3px rgba(0,0,0,0.3), 0 8px 24px rgba(0,0,0,0.2);
 }
 
 body {
   font-family: "KaiTi", "楷体", "STKaiti", "Noto Serif SC", serif;
-  background: #d4c5a9;
+  background: var(--main-bg);
   color: var(--ink);
   line-height: 1.9;
   font-size: 16px;
@@ -93,16 +147,70 @@ body {
   width: var(--sidebar-width);
   height: 100vh;
   background: var(--paper-dark);
-  border-right: 2px solid #b8a88a;
+  border-right: 2px solid var(--border-color);
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
   box-shadow: 2px 0 8px rgba(0,0,0,0.1);
+  transition: width 0.3s, transform 0.3s;
+  position: relative;
 }
+
+.sidebar.collapsed {
+  width: 0;
+  overflow: hidden;
+  border-right: none;
+}
+
+.sidebar-toggle {
+  position: fixed;
+  top: 12px;
+  left: 12px;
+  z-index: 1000;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--paper-dark);
+  border: 1px solid var(--border-color);
+  color: var(--accent);
+  font-size: 18px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: left 0.3s, background 0.2s;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+}
+
+.sidebar-toggle:hover { background: var(--accent); color: #fff; }
+
+body:not(.sidebar-hidden) .sidebar-toggle {
+  left: calc(var(--sidebar-width) - 44px);
+}
+
+.toolbar {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.toolbar button {
+  padding: 4px 10px;
+  background: var(--paper-dark);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--ink-light);
+  transition: all 0.15s;
+}
+
+.toolbar button:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
 
 .sidebar-header {
   padding: 16px;
-  border-bottom: 1px solid #b8a88a;
+  border-bottom: 1px solid var(--border-color);
   background: var(--paper-bg);
 }
 
@@ -121,9 +229,10 @@ body {
 .page-jump input {
   width: 60px;
   padding: 4px 8px;
-  border: 1px solid #b8a88a;
+  border: 1px solid var(--border-color);
   border-radius: 4px;
-  background: #fff;
+  background: var(--paper-bg);
+  color: var(--ink);
   font-family: inherit;
   font-size: 13px;
 }
@@ -194,9 +303,20 @@ body {
       rgba(139, 69, 19, 0.03) 38px,
       rgba(139, 69, 19, 0.03) 39px
     ),
-    linear-gradient(135deg, #f7f2ea 0%, #f0e8d8 50%, #ede4d0 100%);
+    var(--main-surface);
   background-attachment: local;
-  scroll-behavior: smooth;
+}
+
+[data-theme="dark"] .main {
+  background:
+    repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 38px,
+      rgba(255, 255, 255, 0.02) 38px,
+      rgba(255, 255, 255, 0.02) 39px
+    ),
+    var(--main-surface);
 }
 
 .page {
@@ -204,12 +324,9 @@ body {
   margin: 0 auto 60px;
   padding: 48px 56px;
   background: var(--paper-bg);
-  border: 1px solid #d4c5a9;
+  border: 1px solid var(--border-color);
   border-radius: 2px;
-  box-shadow:
-    0 1px 3px rgba(0,0,0,0.08),
-    0 8px 24px rgba(0,0,0,0.04),
-    inset 0 0 80px rgba(139, 69, 19, 0.02);
+  box-shadow: var(--page-shadow);
   position: relative;
 }
 
@@ -286,7 +403,7 @@ body {
 }
 
 .page th, .page td {
-  border: 1px solid #c4b896;
+  border: 1px solid var(--border-color);
   padding: 8px 10px;
   text-align: left;
 }
@@ -317,6 +434,11 @@ body {
   margin: 12px 0;
 }
 
+[data-theme="dark"] .page pre {
+  background: #111;
+  color: #d4c5a9;
+}
+
 .page pre code {
   background: none;
   padding: 0;
@@ -333,10 +455,23 @@ body {
 
 .page strong { color: var(--accent); }
 
+.page-image {
+  margin: 16px 0;
+  text-align: center;
+}
+
+.page-image img {
+  max-width: 100%;
+  height: auto;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+}
+
 /* Scrollbar */
 ::-webkit-scrollbar { width: 8px; }
 ::-webkit-scrollbar-track { background: var(--paper-dark); }
-::-webkit-scrollbar-thumb { background: #b8a88a; border-radius: 4px; }
+::-webkit-scrollbar-thumb { background: var(--border-color); border-radius: 4px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--accent); }
 
 /* Responsive */
@@ -344,18 +479,24 @@ body {
   .sidebar { width: 240px; }
   .main { padding: 20px; }
   .page { padding: 24px; }
+  body:not(.sidebar-hidden) .sidebar-toggle { left: 196px; }
 }
 </style>
 </head>
 <body>
 
-<div class="sidebar">
+<button class="sidebar-toggle" id="sidebarToggle" title="收起/展开目录">&#9776;</button>
+
+<div class="sidebar" id="sidebar">
   <div class="sidebar-header">
     <h2>目录导航</h2>
     <div class="page-jump">
       <input type="number" id="pageInput" min="1" placeholder="页码">
       <button onclick="jumpToPage()">跳转</button>
       <span id="pageTotal"></span>
+    </div>
+    <div class="toolbar">
+      <button id="themeToggle">夜间模式</button>
     </div>
   </div>
   <div class="toc-container" id="tocContainer">
@@ -374,6 +515,9 @@ document.getElementById('pageTotal').textContent = '/ ' + totalPages;
 const mainEl = document.getElementById('mainContent');
 const tocContainer = document.getElementById('tocContainer');
 const tocItems = document.querySelectorAll('.toc-item');
+const sidebar = document.getElementById('sidebar');
+const sidebarToggle = document.getElementById('sidebarToggle');
+const themeToggle = document.getElementById('themeToggle');
 
 // Render all pages
 function renderPages() {
@@ -383,16 +527,38 @@ function renderPages() {
   }
   mainEl.innerHTML = html;
 }
-
 renderPages();
+
+// Sidebar toggle
+sidebarToggle.addEventListener('click', () => {
+  sidebar.classList.toggle('collapsed');
+  document.body.classList.toggle('sidebar-hidden');
+});
+
+// Theme toggle
+function setTheme(dark) {
+  document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
+  themeToggle.textContent = dark ? '日间模式' : '夜间模式';
+  localStorage.setItem('theme', dark ? 'dark' : 'light');
+}
+
+themeToggle.addEventListener('click', () => {
+  const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+  setTheme(!isDark);
+});
+
+// Restore saved theme
+if (localStorage.getItem('theme') === 'dark') setTheme(true);
 
 // Jump to page
 function jumpToPage() {
   const input = document.getElementById('pageInput');
   const num = parseInt(input.value);
   if (num >= 1 && num <= totalPages) {
-    const target = document.querySelector('.page[data-page="' + (num - 1) + '"]');
-    if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    const target = mainEl.querySelector('.page[data-page="' + (num - 1) + '"]');
+    if (target) {
+      mainEl.scrollTo({ top: target.offsetTop - mainEl.offsetTop, behavior: 'smooth' });
+    }
   }
 }
 
@@ -400,17 +566,20 @@ document.getElementById('pageInput').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') jumpToPage();
 });
 
-// TOC click
+// TOC click — fixed: scroll the .main container directly
 tocItems.forEach(item => {
   item.addEventListener('click', () => {
-    const page = parseInt(item.dataset.page);
     const id = item.dataset.id;
-    const target = document.getElementById(id);
+    const target = mainEl.querySelector('#' + CSS.escape(id));
     if (target) {
-      target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      const offset = target.getBoundingClientRect().top - mainEl.getBoundingClientRect().top + mainEl.scrollTop;
+      mainEl.scrollTo({ top: offset - 20, behavior: 'smooth' });
     } else {
-      const pageEl = document.querySelector('.page[data-page="' + page + '"]');
-      if (pageEl) pageEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      const page = parseInt(item.dataset.page);
+      const pageEl = mainEl.querySelector('.page[data-page="' + page + '"]');
+      if (pageEl) {
+        mainEl.scrollTo({ top: pageEl.offsetTop - mainEl.offsetTop, behavior: 'smooth' });
+      }
     }
   });
 });
@@ -428,30 +597,26 @@ mainEl.addEventListener('scroll', () => {
 });
 
 function updateActiveToc() {
-  const scrollTop = mainEl.scrollTop;
-  const viewHeight = mainEl.clientHeight;
-  const viewMid = scrollTop + viewHeight * 0.3;
+  const rect = mainEl.getBoundingClientRect();
+  const viewMid = rect.top + rect.height * 0.3;
 
-  let activeItem = null;
+  let activeId = null;
   const allHeadings = mainEl.querySelectorAll('h1[id], h2[id], h3[id], h4[id]');
 
   for (let i = allHeadings.length - 1; i >= 0; i--) {
-    if (allHeadings[i].offsetTop <= viewMid) {
-      activeItem = allHeadings[i].id;
+    if (allHeadings[i].getBoundingClientRect().top <= viewMid) {
+      activeId = allHeadings[i].id;
       break;
     }
   }
 
   tocItems.forEach(item => {
-    if (item.dataset.id === activeItem) {
+    if (item.dataset.id === activeId) {
       item.classList.add('active');
-      // Scroll TOC to keep active item visible
-      const container = tocContainer;
-      const itemTop = item.offsetTop - container.offsetTop;
-      const containerScroll = container.scrollTop;
-      const containerHeight = container.clientHeight;
-      if (itemTop < containerScroll || itemTop > containerScroll + containerHeight - 40) {
-        container.scrollTop = itemTop - containerHeight / 2;
+      const itemRect = item.getBoundingClientRect();
+      const containerRect = tocContainer.getBoundingClientRect();
+      if (itemRect.top < containerRect.top || itemRect.bottom > containerRect.bottom) {
+        item.scrollIntoView({ block: 'center', behavior: 'smooth' });
       }
     } else {
       item.classList.remove('active');
@@ -459,7 +624,6 @@ function updateActiveToc() {
   });
 }
 
-// Initial highlight
 setTimeout(updateActiveToc, 100);
 </script>
 </body>
