@@ -1,7 +1,7 @@
 # Claude Opus 4.8 System Card 中文翻译
 
-Anthropic Claude Opus 4.8 系统卡片的完整中文翻译，附宣纸风格 HTML 阅读器。
-在线查看器： [https://connectedgraph.github.io/claude-opus-4.8-system-card-zh/](https://connectedgraph.github.io/claude-opus-4.8-system-card-zh/)
+- Anthropic Claude Opus 4.8 系统卡片的完整中文翻译，附宣纸风格 HTML 阅读器。
+- 在线查看器： [https://connectedgraph.github.io/claude-opus-4.8-system-card-zh/](https://connectedgraph.github.io/claude-opus-4.8-system-card-zh/)
 
 ## 预览
 
